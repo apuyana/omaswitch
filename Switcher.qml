@@ -9,7 +9,7 @@ import "Model.js" as Model
 
 // Keyboard-first window switcher overlay with a live window peek.
 //
-// Opened with `omarchy-shell shell toggle piyush.omaswitch` (bind it to
+// Opened with `omarchy-shell shell toggle apuyana.omaswitch` (bind it to
 // a key in ~/.config/hypr/bindings.lua). Lists Hyprland toplevels from the
 // Quickshell Hyprland singleton, filters live as you type, and focuses the
 // selection through the native Wayland toplevel API, with hyprctl as fallback.
@@ -555,7 +555,7 @@ Item {
   function dismiss() {
     root.close()
     if (root.shell && typeof root.shell.hide === "function")
-      root.shell.hide((root.manifest && root.manifest.id) || "piyush.omaswitch")
+      root.shell.hide((root.manifest && root.manifest.id) || "apuyana.omaswitch")
   }
 
   Connections {
@@ -951,10 +951,11 @@ Item {
         }
       }
 
-      // Best-effort native Alt-Tab behavior. If the compositor delivers the
+      // Best-effort hold-modifier behavior. If the compositor delivers the
       // modifier release after granting this overlay focus, commit selection.
+      // Ctrl is included because Alt release is often swallowed on Wayland.
       Keys.onReleased: function(event) {
-        if (root.cycleMode && (event.key === Qt.Key_Alt || event.key === Qt.Key_Meta)) {
+        if (root.cycleMode && (event.key === Qt.Key_Control || event.key === Qt.Key_Alt || event.key === Qt.Key_Meta)) {
           root.focusSelected()
           event.accepted = true
         }
