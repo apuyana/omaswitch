@@ -35,10 +35,15 @@ done
 
 (( installed )) || echo "No Chromium-based browser profile found under ~/.config."
 
+# File pickers hide ~/.config; expose the extension at a visible path.
+visible="$HOME/Extensions/omaswitch-tabs"
+mkdir -p "$HOME/Extensions"
+ln -sfn "$here/extension" "$visible"
+
 cat <<EOF
 
 Last step (once per browser): open edge://extensions or chrome://extensions,
 turn on Developer mode, click "Load unpacked" and pick:
-  $here/extension
+  $visible
 The extension id should be $extension_id.
 EOF
