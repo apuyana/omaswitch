@@ -442,6 +442,7 @@ Item {
     var now = Date.now()
     if (root.lastActiveKey) root.windowUsedAt[root.lastActiveKey] = now
     root.windowFocusedAt[key] = now
+    focusSave.restart()
     root.lastActiveKey = key
   }
 
@@ -661,6 +662,55 @@ Item {
   }
 
   Component.onCompleted: root.syncCardGeometry()
+
+  // Focus times live only in memory, but the shell reloads plugins (config
+  // edits, updates) while windows stay open. Without them every window looks
+  // newer than every tab, so keep them in the runtime dir across reloads.
+  property bool focusStoreLoaded: false
+
+  function saveFocusTimes() {
+    if (!root.focusStoreLoaded) return
+    var alive = {}
+    var values = Hyprland.toplevels.values
+    for (var i = 0; i < values.length; i++) {
+      var key = Model.addressKey(values[i])
+      if (key) alive[key] = true
+    }
+    var usedAt = {}, focusedAt = {}
+    for (var u in root.windowUsedAt) if (alive[u]) usedAt[u] = root.windowUsedAt[u]
+    for (var f in root.windowFocusedAt) if (alive[f]) focusedAt[f] = root.windowFocusedAt[f]
+    focusStore.setText(JSON.stringify({ usedAt: usedAt, focusedAt: focusedAt, lastActive: root.lastActiveKey }) + "\n")
+  }
+
+  function restoreFocusTimes(text) {
+    var saved = {}
+    try { saved = JSON.parse(text || "{}") } catch (e) { saved = {} }
+    if (saved && typeof saved === "object") {
+      var usedAt = saved.usedAt || {}, focusedAt = saved.focusedAt || {}
+      // Events seen since this load are newer than anything saved.
+      for (var u in usedAt)
+        if (typeof usedAt[u] === "number" && root.windowUsedAt[u] === undefined) root.windowUsedAt[u] = usedAt[u]
+      for (var f in focusedAt)
+        if (typeof focusedAt[f] === "number" && root.windowFocusedAt[f] === undefined) root.windowFocusedAt[f] = focusedAt[f]
+    }
+    root.focusStoreLoaded = true
+    if (root.opened) root.refresh()
+  }
+
+  Timer {
+    id: focusSave
+    interval: 1000
+    onTriggered: root.saveFocusTimes()
+  }
+
+  FileView {
+    id: focusStore
+    path: Quickshell.env("XDG_RUNTIME_DIR") + "/omaswitch-focus.json"
+    atomicWrites: true
+    printErrors: false
+    onLoaded: root.restoreFocusTimes(text())
+    onLoadFailed: root.restoreFocusTimes("{}")
+  }
 
   // The tab host rewrites `stamp` after every snapshot. Create it up front so
   // the file watch has something to watch before any browser connects.
