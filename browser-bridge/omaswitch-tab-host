@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+"""Native messaging host for the OmaSwitch Tabs browser extension.
+
+Browser -> host: tab snapshots, written atomically to
+  $XDG_RUNTIME_DIR/omaswitch-tabs/<browser>-<pid>.json
+then the `stamp` file in that directory is rewritten so the switcher reloads.
+
+Switcher -> host: a tab id written as one line to the FIFO named in the
+snapshot (`<browser>-<pid>.cmd`); it is forwarded as {"activate": id}.
+
+One host process runs per browser profile; its files are removed on exit.
+"""
+
+import json
+import os
+import re
+import struct
+import sys
+import threading
+
+RUNTIME = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+DIR = os.path.join(RUNTIME, "omaswitch-tabs")
+STAMP = os.path.join(DIR, "stamp")
+MAX_MESSAGE = 4 * 1024 * 1024
+
+out_lock = threading.Lock()
+
+
+def touch_stamp():
+    # Rewrite in place (same inode) so the switcher's file watch keeps firing.
+    with open(STAMP, "w") as f:
+        f.write(f"{os.getpid()} {os.times().elapsed}")
+
+
+def send(message):
+    data = json.dumps(message).encode()
+    with out_lock:
+        sys.stdout.buffer.write(struct.pack("<I", len(data)) + data)
+        sys.stdout.buffer.flush()
+
+
+def read_message():
+    header = sys.stdin.buffer.read(4)
+    if len(header) < 4:
+        return None
+    (length,) = struct.unpack("<I", header)
+    if length > MAX_MESSAGE:
+        return None
+    body = sys.stdin.buffer.read(length)
+    if len(body) < length:
+        return None
+    return json.loads(body)
+
+
+def serve_commands(fifo):
+    # O_RDWR keeps a writer open ourselves, so the FIFO never hits EOF
+    # between switcher writes and opening never blocks.
+    fd = os.open(fifo, os.O_RDWR)
+    with os.fdopen(fd, "r") as commands:
+        for line in commands:
+            line = line.strip()
+            if line.isdigit():
+                send({"activate": int(line)})
+
+
+def main():
+    os.makedirs(DIR, mode=0o700, exist_ok=True)
+    pid = os.getpid()
+    base = None
+    try:
+        while True:
+            message = read_message()
+            if message is None:
+                break
+            browser = str(message.get("browser") or "chromium")
+            if not re.fullmatch(r"[a-z]+", browser):
+                browser = "chromium"
+            if base is None:
+                base = os.path.join(DIR, f"{browser}-{pid}")
+                fifo = base + ".cmd"
+                if os.path.exists(fifo):
+                    os.unlink(fifo)
+                os.mkfifo(fifo, 0o600)
+                threading.Thread(target=serve_commands, args=(fifo,), daemon=True).start()
+            message["cmd"] = base + ".cmd"
+            tmp = f"{base}.json.tmp"
+            with open(tmp, "w") as f:
+                json.dump(message, f)
+            os.replace(tmp, base + ".json")
+            touch_stamp()
+    finally:
+        if base:
+            for suffix in (".json", ".cmd", ".json.tmp"):
+                try:
+                    os.unlink(base + suffix)
+                except FileNotFoundError:
+                    pass
+            touch_stamp()
+
+
+if __name__ == "__main__":
+    main()
