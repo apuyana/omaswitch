@@ -61,6 +61,17 @@ Item {
 
   // Scalar window snapshots + filtered rows; no QObjects in the delegate model.
   property var allWindows: []
+
+  // Browser tabs from browser-bridge/ (one snapshot per browser profile), and
+  // when each window last lost focus, so tabs interleave with windows by time.
+  property var tabSnapshots: []
+  property var windowUsedAt: ({})
+  property string lastActiveKey: ""
+  // True until the user moves the selection after an Alt+Tab open; a late tab
+  // snapshot then re-picks the "previous" row instead of keeping a stale one.
+  property bool cyclePickPending: false
+  property int cyclePickDirection: 1
+  readonly property string tabsDir: Quickshell.env("XDG_RUNTIME_DIR") + "/omaswitch-tabs"
   property var rows: []
 
   readonly property int headerHeight: Math.max(Style.space(34), Style.font.title + Style.spacing.controlPaddingY * 2)
@@ -419,8 +430,40 @@ Item {
   }
 
   function refresh() {
-    allWindows = Model.sortedWindows(Model.managedWindows(Hyprland.toplevels.values), root.mruAddresses).map(Model.windowSnapshot)
+    var windows = Model.sortedWindows(Model.managedWindows(Hyprland.toplevels.values), root.mruAddresses).map(Model.windowSnapshot)
+    allWindows = Model.expandBrowserTabs(windows, root.tabSnapshots, root.windowUsedAt)
     rebuildRows()
+  }
+
+  function noteActiveWindow(address) {
+    var key = Model.addressKey(address)
+    if (!key || key === root.lastActiveKey) return
+    if (root.lastActiveKey) root.windowUsedAt[root.lastActiveKey] = Date.now()
+    root.lastActiveKey = key
+  }
+
+  function loadTabSnapshots(text) {
+    var value = []
+    try { value = JSON.parse(text || "[]") } catch (e) { value = [] }
+    root.tabSnapshots = Array.isArray(value) ? value : []
+    if (!root.opened) return
+    var selected = root.rows[root.selectedIndex]
+    var key = selected ? Model.rowKey(selected) : ""
+    root.refresh()
+    if (root.cyclePickPending && root.filterText === "") {
+      if (root.rows.length > 1)
+        root.selectedIndex = root.cyclePickDirection < 0 ? root.rows.length - 1 : 1
+    } else if (key) {
+      for (var i = 0; i < root.rows.length; i++) {
+        if (Model.rowKey(root.rows[i]) === key) { root.selectedIndex = i; break }
+      }
+    }
+    keepSelectionVisible.restart()
+  }
+
+  function reloadTabs() {
+    if (tabLoader.running) tabLoader.reloadQueued = true
+    else tabLoader.running = true
   }
 
   function seedMru(text) {
@@ -431,6 +474,7 @@ Item {
       seeded = Model.promoteAddress(seeded, root.pendingMruPromotions[i])
     root.pendingMruPromotions = []
     root.mruAddresses = seeded
+    if (!root.lastActiveKey && seeded.length > 0) root.lastActiveKey = seeded[0]
     if (root.opened) root.refresh()
   }
 
@@ -458,6 +502,8 @@ Item {
     root.pendingFocus = null
     pendingFocusBackstop.stop()
     if (!Model.windowForAddress(Hyprland.toplevels.values, window.address)) return
+    var tabCommand = Model.tabActivateCommand(window, Quickshell.env("XDG_RUNTIME_DIR"))
+    if (tabCommand) Quickshell.execDetached(tabCommand)
     var command = Model.focusCommand(window)
     if (command) {
       Quickshell.execDetached(["sh", "-c", command])
@@ -494,6 +540,7 @@ Item {
 
   function select(delta) {
     if (rows.length === 0) return
+    root.cyclePickPending = false
     selectedIndex = (selectedIndex + delta + rows.length) % rows.length
     keepSelectionVisible.restart()
   }
@@ -517,6 +564,9 @@ Item {
     root.resetPreview()
     root.resetOcr()
     root.cycleMode = payload.mode === "cycle"
+    root.cyclePickPending = root.cycleMode
+    root.cyclePickDirection = direction
+    root.reloadTabs()
     root.filterText = ""
     root.selectedIndex = 0
 
@@ -589,6 +639,7 @@ Item {
       if (name === "activewindowv2") {
         var address = event ? String(event.data || "") : ""
         root.mruAddresses = Model.promoteAddress(root.mruAddresses, address)
+        root.noteActiveWindow(address)
         if (mruSeedProcess.running)
           root.pendingMruPromotions = Model.promoteAddress(root.pendingMruPromotions, address)
         // The post-unmap focus restore is the cue to apply a pending
@@ -607,6 +658,41 @@ Item {
   }
 
   Component.onCompleted: root.syncCardGeometry()
+
+  // The tab host rewrites `stamp` after every snapshot. Create it up front so
+  // the file watch has something to watch before any browser connects.
+  Process {
+    id: tabDirSetup
+    running: true
+    command: ["sh", "-c", "mkdir -p -m 700 \"$1\" && { [ -e \"$1/stamp\" ] || : > \"$1/stamp\"; }", "sh", root.tabsDir]
+    onExited: {
+      tabStamp.path = root.tabsDir + "/stamp"
+      root.reloadTabs()
+    }
+  }
+
+  FileView {
+    id: tabStamp
+    watchChanges: true
+    printErrors: false
+    onFileChanged: root.reloadTabs()
+  }
+
+  Process {
+    id: tabLoader
+    property bool reloadQueued: false
+    command: ["sh", "-c", "set -- \"$1\"/*.json; [ -e \"$1\" ] && jq -cs . \"$@\" 2>/dev/null || echo []", "sh", root.tabsDir]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.loadTabSnapshots(text)
+    }
+    onExited: {
+      if (reloadQueued) {
+        reloadQueued = false
+        running = true
+      }
+    }
+  }
   Process {
     id: mruSeedProcess
     command: ["hyprctl", "clients", "-j"]

@@ -142,7 +142,7 @@ const fs = require("node:fs")
 const vm = require("node:vm")
 const qml = fs.readFileSync(__dirname + "/Switcher.qml", "utf8")
 assert.match(qml, /\.map\(Model\.windowSnapshot\)/, "ListView rows must use scalar snapshots")
-assert.match(qml, /function refresh\(\) \{\s*allWindows = Model\.sortedWindows\(Model\.managedWindows\(Hyprland\.toplevels\.values\)/,
+assert.match(qml, /function refresh\(\) \{\s*var windows = Model\.sortedWindows\(Model\.managedWindows\(Hyprland\.toplevels\.values\)/,
   "rows must skip stale workspace-less toplevels")
 assert.match(qml, /onObjectRemovedPre\(window\)[\s\S]*?previewSourceA === source[\s\S]*?previewSourceB === source[\s\S]*?resetPreview\(\)/,
   "capture sources must clear before any retained toplevel is destroyed")
@@ -400,3 +400,56 @@ for (var replayIndex = replayed.length - 1; replayIndex >= 0; replayIndex--)
   seededMru = Model.promoteAddress(seededMru, replayed[replayIndex])
 assert.deepEqual(seededMru, ["ddd", "eee", "aaa", "bbb", "ccc"])
 console.log("Model checks passed")
+
+// --- Browser tabs: interleaved by last use, top N per window ---------------
+;(function() {
+  const edge = { address: "0xe1", title: "Inbox", activated: false, workspace: { id: 1 }, lastIpcObject: { class: "microsoft-edge", focusHistoryID: 1 } }
+  const term = { address: "0xa1", title: "Terminal", activated: true, workspace: { id: 2 }, lastIpcObject: { class: "foot", focusHistoryID: 0 } }
+  const notes = { address: "0xb1", title: "Notes", activated: false, workspace: { id: 3 }, lastIpcObject: { class: "obsidian", focusHistoryID: 2 } }
+  const chrome = { address: "0xc1", title: "Docs - Google Chrome", activated: false, workspace: { id: 4 }, lastIpcObject: { class: "google-chrome", focusHistoryID: 3 } }
+  const pwa = { address: "0xd1", title: "WhatsApp", activated: false, workspace: { id: 5 }, lastIpcObject: { class: "msedge-web.whatsapp.com__-Default", focusHistoryID: 4 } }
+  const runtime = "/run/user/1000"
+  const snapshots = [
+    { browser: "edge", cmd: runtime + "/omaswitch-tabs/edge-42.cmd", windows: [{ id: 1, tabs: [
+      { id: 10, active: true, title: "Inbox", url: "https://mail.example.com/" },
+      { id: 11, active: false, title: "Wiki", url: "https://www.wiki.example.org/x", usedAt: 950 },
+      { id: 12, active: false, title: "Old", url: "https://old.example.com/", usedAt: 100 },
+      { id: 13, active: false, title: "T4", url: "", usedAt: 90 },
+      { id: 14, active: false, title: "T5", url: "", usedAt: 80 },
+      { id: 15, active: false, title: "T6", url: "", usedAt: 70 }
+    ] }] },
+    { browser: "chrome", cmd: runtime + "/omaswitch-tabs/chrome-7.cmd", windows: [{ id: 2, tabs: [
+      { id: 20, active: true, title: "Docs", url: "https://docs.example.com/" },
+      { id: 21, active: false, title: "Search", url: "https://search.example.com/", usedAt: 400 }
+    ] }] }
+  ]
+  // Edge lost focus at 1000, Notes at 500, Chrome at 300, WhatsApp unknown.
+  const usedAt = { e1: 1000, b1: 500, c1: 300 }
+  const rows = Model.expandBrowserTabs([term, edge, notes, chrome, pwa], snapshots, usedAt, 5)
+  const names = rows.map((r) => r.title)
+  // Terminal (focused), Edge's visible tab, Edge tab Wiki (950), Notes (500),
+  // Chrome (300) and its hidden tab Search (400, capped below its own window),
+  // WhatsApp (no focus time: placed right after its MRU neighbour), then the
+  // older Edge tabs. Only 5 tabs per window: T6 is dropped.
+  assert.deepEqual(names, ["Terminal", "Inbox", "Wiki", "Notes", "Docs", "Search", "WhatsApp", "Old", "T4", "T5"])
+  assert.equal(rows.filter((r) => r.tab && r.tab.browser === "edge").length, 5)
+  assert.equal(rows[1].tab.active, true)
+  assert.equal(rows[2].tab.active, false)
+  assert.equal(rows[6].tab, undefined, "PWA stays a plain window")
+  assert.equal(Model.detail(rows[2]), "wiki.example.org · tab · ws 1")
+  assert.deepEqual(Model.filteredWindows(rows, "wiki").map((r) => r.title), ["Wiki"])
+  // Hidden tabs never match on OCR text captured from the visible tab.
+  assert.deepEqual(Model.filteredWindows(rows, "secret", { e1: { text: "secret" } }).map((r) => r.title), ["Inbox"])
+  assert.deepEqual(Model.tabActivateCommand(rows[2], runtime),
+    ["timeout", "1", "sh", "-c", "printf '%s\\n' \"$1\" > \"$2\"", "sh", "11", runtime + "/omaswitch-tabs/edge-42.cmd"])
+  assert.equal(Model.tabActivateCommand(rows[1], runtime), null, "active tab only needs window focus")
+  const evil = Object.assign({}, rows[2], { tab: Object.assign({}, rows[2].tab, { cmd: "/etc/passwd" }) })
+  assert.equal(Model.tabActivateCommand(evil, runtime), null)
+  assert.notEqual(Model.rowKey(rows[1]), Model.rowKey(rows[2]))
+  // No snapshot: rows unchanged, MRU order kept.
+  assert.deepEqual(Model.expandBrowserTabs([term, edge, notes], [], {}).map((r) => r.title), ["Terminal", "Inbox", "Notes"])
+  // Unmatched title (stale snapshot) leaves the window alone.
+  const renamed = Object.assign({}, edge, { title: "Something else" })
+  assert.deepEqual(Model.expandBrowserTabs([term, renamed], snapshots, usedAt).map((r) => r.title), ["Terminal", "Something else"])
+})()
+console.log("Browser tab checks passed")

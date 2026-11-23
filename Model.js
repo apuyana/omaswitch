@@ -24,6 +24,7 @@ function label(window) {
 function detail(window) {
   if (!window) return ""
   var value = appId(window)
+  if (window.tab) value = (hostOf(window.tab.url) || window.tab.url || value) + (window.tab.active ? "" : " · tab")
   if (window.workspace) value += (value ? " · " : "") + "ws " + String(window.workspace.id)
   return boundedText(value)
 }
@@ -173,16 +174,158 @@ function sortedWindows(values, rankFn) {
   return result
 }
 
+// --- Browser tabs -----------------------------------------------------------
+// The OmaSwitch Tabs extension (browser-bridge/) reports, per browser window,
+// its most recently used tabs. A browser window row is replaced by one row per
+// tab, and every row is ordered by when it was last in use, so tabs and other
+// windows interleave the way Edge's Alt+Tab does on Windows.
+
+var tabsPerWindow = 5
+
+// Hyprland class -> `browser` value the extension reports. PWAs use other
+// classes (msedge-*, chrome-*) and stay plain windows.
+function browserKind(window) {
+  var id = appId(window).toLowerCase()
+  if (id === "microsoft-edge" || id === "microsoft-edge-beta" || id === "microsoft-edge-dev") return "edge"
+  if (id === "google-chrome" || id === "google-chrome-beta" || id === "google-chrome-unstable") return "chrome"
+  if (id === "chromium" || id === "brave-browser") return "chromium"
+  return ""
+}
+
+function isTabRow(row) {
+  return !!(row && row.tab)
+}
+
+// Rows for tabs that are not the window's visible tab: the window preview and
+// its OCR text show a different page, so only their own title/URL can match.
+function isHiddenTab(row) {
+  return isTabRow(row) && !row.tab.active
+}
+
+function hostOf(url) {
+  var match = /^[a-z][a-z0-9+.-]*:\/\/([^\/?#]+)/i.exec(String(url || ""))
+  return match ? match[1].replace(/^www\./, "") : ""
+}
+
+function titleMatches(windowTitle, tabTitle) {
+  var w = String(windowTitle || ""), t = String(tabTitle || "")
+  if (!t) return 0
+  if (w === t) return 2
+  return w.indexOf(t + " - ") === 0 ? 1 : 0
+}
+
+// Pair each Hyprland browser window with the extension's window whose active
+// tab title matches the toplevel title (Edge: "<tab>", Chrome: "<tab> - Google
+// Chrome"). Exact matches win; each extension window is used once.
+function matchBrowserWindows(rows, snapshots) {
+  var candidates = []
+  var source = snapshots && typeof snapshots.slice === "function" ? snapshots : []
+  for (var s = 0; s < source.length; s++) {
+    var snap = source[s] || {}
+    var windows = snap.windows && typeof snap.windows.slice === "function" ? snap.windows : []
+    for (var w = 0; w < windows.length; w++) {
+      var tabs = windows[w] && windows[w].tabs && typeof windows[w].tabs.slice === "function" ? windows[w].tabs : []
+      var active = null
+      for (var t = 0; t < tabs.length; t++) if (tabs[t] && tabs[t].active) active = tabs[t]
+      if (active) candidates.push({ browser: String(snap.browser || ""), cmd: String(snap.cmd || ""), tabs: tabs, active: active, used: false })
+    }
+  }
+  var result = {}
+  for (var pass = 2; pass >= 1; pass--) {
+    for (var i = 0; i < rows.length; i++) {
+      var key = addressKey(rows[i])
+      var kind = browserKind(rows[i])
+      if (!kind || !key || result[key]) continue
+      for (var c = 0; c < candidates.length; c++) {
+        var cand = candidates[c]
+        if (cand.used || cand.browser !== kind) continue
+        if (titleMatches(rows[i].title, cand.active.title) !== pass) continue
+        cand.used = true
+        result[key] = cand
+        break
+      }
+    }
+  }
+  return result
+}
+
+// rows: window snapshots in MRU order (rows[0] focused).
+// windowUsedAt: addressKey -> ms when that window last lost focus.
+// Returns rows ordered by last use, browser windows expanded into tab rows.
+function expandBrowserTabs(rows, snapshots, windowUsedAt, limit) {
+  var source = rows && typeof rows.slice === "function" ? rows : []
+  var usedAt = windowUsedAt || {}
+  var perWindow = limit > 0 ? limit : tabsPerWindow
+  var matches = matchBrowserWindows(source, snapshots)
+  var unknownBase = 8e15
+  var items = []
+  var previous = Infinity
+  for (var i = 0; i < source.length; i++) {
+    var row = source[i]
+    var key = addressKey(row)
+    var time
+    if (i === 0 && isCurrent(row)) time = Infinity
+    else if (key && typeof usedAt[key] === "number") time = usedAt[key]
+    else time = isFinite(previous) ? previous - 1 : unknownBase - i
+    // Keep the compositor's MRU order authoritative between windows.
+    if (time >= previous) time = isFinite(previous) ? previous - 1 : unknownBase - i
+    previous = time
+
+    var match = key ? matches[key] : null
+    if (!match) {
+      items.push({ row: row, time: time, order: items.length })
+      continue
+    }
+    var tabs = match.tabs.slice(0, perWindow)
+    for (var t = 0; t < tabs.length; t++) {
+      var tab = tabs[t]
+      if (!tab || typeof tab.id !== "number") continue
+      var tabTime = tab.active ? time : Math.min(Number(tab.usedAt) || 0, time - 1)
+      items.push({
+        row: Object.assign({}, row, {
+          title: String(tab.title || ""),
+          tab: { id: tab.id, active: !!tab.active, url: String(tab.url || ""), cmd: match.cmd, browser: match.browser }
+        }),
+        time: tabTime,
+        order: items.length
+      })
+    }
+  }
+  items.sort(function(left, right) {
+    if (left.time !== right.time) return left.time > right.time ? -1 : 1
+    return left.order - right.order
+  })
+  return items.map(function(item) { return item.row })
+}
+
+// Tab-id write to the host FIFO; the path must be the host's own file.
+function tabActivateCommand(row, runtimeDir) {
+  if (!isTabRow(row) || row.tab.active) return null
+  var dir = String(runtimeDir || "")
+  if (!/^\/[A-Za-z0-9._\/-]+$/.test(dir) || /(^|\/)\.\.(\/|$)/.test(dir)) return null
+  var cmd = String(row.tab.cmd || "")
+  var prefix = dir.replace(/\/$/, "") + "/omaswitch-tabs/"
+  if (cmd.indexOf(prefix) !== 0 || !/^[a-z]+-[0-9]+\.cmd$/.test(cmd.slice(prefix.length))) return null
+  if (!(Number.isInteger(row.tab.id) && row.tab.id >= 0)) return null
+  return ["timeout", "1", "sh", "-c", "printf '%s\\n' \"$1\" > \"$2\"", "sh", String(row.tab.id), cmd]
+}
+
+function rowKey(row) {
+  return addressKey(row) + (isTabRow(row) ? "#" + row.tab.id : "")
+}
+
 function filteredWindows(values, query, ocrTextByAddress) {
   var q = String(query || "").trim().toLowerCase()
   if (!q) return values.slice()
   return values.filter(function(window) {
-    return metadataMatches(window, q) || ocrText(ocrTextByAddress, window).toLowerCase().indexOf(q) !== -1
+    if (metadataMatches(window, q)) return true
+    return !isHiddenTab(window) && ocrText(ocrTextByAddress, window).toLowerCase().indexOf(q) !== -1
   })
 }
 
 function metadataMatches(window, q) {
   var metadata = String(window && window.title || "") + " " + appId(window)
+  if (isTabRow(window)) metadata += " " + window.tab.url
   if (window && window.workspace) metadata += " ws " + String(window.workspace.id)
   return metadata.toLowerCase().indexOf(q) !== -1
 }
@@ -227,7 +370,7 @@ function parseOcrTsv(tsv) {
 function ocrHighlights(window, query, ocrByAddress) {
   var q = String(query || "").trim().toLowerCase()
   var entry = ocrEntry(ocrByAddress, window)
-  if (!q || !entry || !entry.lines || metadataMatches(window, q)) return []
+  if (!q || !entry || !entry.lines || isHiddenTab(window) || metadataMatches(window, q)) return []
   var boxes = []
   for (var i = 0; i < entry.lines.length && boxes.length < 24; i++) {
     // Lowercase per word before measuring spans: toLowerCase() can change
@@ -288,5 +431,12 @@ if (typeof module !== "undefined") module.exports = {
   managedWindows: managedWindows,
   sortedWindows: sortedWindows,
   filteredWindows: filteredWindows,
-  focusCommand: focusCommand
+  focusCommand: focusCommand,
+  browserKind: browserKind,
+  isTabRow: isTabRow,
+  hostOf: hostOf,
+  matchBrowserWindows: matchBrowserWindows,
+  expandBrowserTabs: expandBrowserTabs,
+  tabActivateCommand: tabActivateCommand,
+  rowKey: rowKey
 }

@@ -13,6 +13,19 @@ OmaSwitch is a keyboard-first window switcher overlay for [Omarchy](https://omar
 
 **Write-up:** [OmaSwitch: The Alt+Tab Omarchy Has Been Missing](https://piyushmehta.com/blog/omaswitch-alt-tab-omarchy)
 
+> **Fork note (apuyana/omaswitch).** This fork installs as `apuyana.omaswitch` and adds:
+> - Confirming the selection when **Ctrl** is released too (Alt release is often swallowed on Wayland).
+> - **Recent browser tabs in Alt+Tab** for Microsoft Edge and Google Chrome (also Chromium/Brave), like Edge on Windows: the 5 most recently used tabs of each browser window show up as their own entries, interleaved by time with your other windows. Picking one focuses that window and switches to that tab.
+>
+> ### Install this fork on a new machine
+> ```bash
+> omarchy plugin add https://github.com/apuyana/omaswitch.git --enable
+> ~/.config/omarchy/plugins/apuyana.omaswitch/browser-bridge/install.sh
+> ```
+> Then, once in each browser: open `edge://extensions` / `chrome://extensions`, turn on **Developer mode**, **Load unpacked**, and pick `~/.config/omarchy/plugins/apuyana.omaswitch/browser-bridge/extension` (id `mphgidpkjniiknflkklakckkdbfnihag`). Bind Alt+Tab as below, using `apuyana.omaswitch` instead of `piyush.omaswitch`.
+>
+> How tabs get here: the extension tracks when each tab stopped being the active one and sends the top tabs per window to `browser-bridge/omaswitch-tab-host` (native messaging), which writes `$XDG_RUNTIME_DIR/omaswitch-tabs/<browser>-<pid>.json`. The switcher pairs each browser window with its extension window by the active tab title, and activates a tab by writing its id to the host FIFO. Incognito windows are never reported. Without the extension, the switcher behaves exactly as upstream.
+
 ## Features
 
 - **Recent windows first.** Global most-recently-used order across all workspaces, so the window you want is usually one tap away.
