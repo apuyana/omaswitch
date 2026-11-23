@@ -366,16 +366,30 @@ function expandBrowserTabs(rows, snapshots, windowUsedAt, limit, windowFocusedAt
   return items.map(function(item) { return item.row })
 }
 
-// Tab-id write to the host FIFO; the path must be the host's own file.
-function tabActivateCommand(row, runtimeDir) {
-  if (!isTabRow(row) || row.tab.active) return null
+// The host's FIFO for a background-tab row, or "" if it is not the host's own
+// file under the runtime dir.
+function hostCmdPath(row, runtimeDir) {
+  if (!isHiddenTab(row)) return ""
   var dir = String(runtimeDir || "")
-  if (!/^\/[A-Za-z0-9._\/-]+$/.test(dir) || /(^|\/)\.\.(\/|$)/.test(dir)) return null
+  if (!/^\/[A-Za-z0-9._\/-]+$/.test(dir) || /(^|\/)\.\.(\/|$)/.test(dir)) return ""
   var cmd = String(row.tab.cmd || "")
   var prefix = dir.replace(/\/$/, "") + "/omaswitch-tabs/"
-  if (cmd.indexOf(prefix) !== 0 || !/^[a-z]+-[0-9]+\.cmd$/.test(cmd.slice(prefix.length))) return null
-  if (!(Number.isInteger(row.tab.id) && row.tab.id >= 0)) return null
+  if (cmd.indexOf(prefix) !== 0 || !/^[a-z]+-[0-9]+\.cmd$/.test(cmd.slice(prefix.length))) return ""
+  if (!(Number.isInteger(row.tab.id) && row.tab.id >= 0)) return ""
+  return cmd
+}
+
+// Tab-id write to the host FIFO.
+function tabActivateCommand(row, runtimeDir) {
+  var cmd = hostCmdPath(row, runtimeDir)
+  if (!cmd) return null
   return ["timeout", "1", "sh", "-c", "printf '%s\\n' \"$1\" > \"$2\"", "sh", String(row.tab.id), cmd]
+}
+
+// Screenshot the extension took while this background tab was visible.
+function tabThumbPath(row, runtimeDir) {
+  var cmd = hostCmdPath(row, runtimeDir)
+  return cmd ? cmd.replace(/\.cmd$/, "-" + row.tab.id + ".jpg") : ""
 }
 
 function rowKey(row) {
@@ -506,5 +520,7 @@ if (typeof module !== "undefined") module.exports = {
   matchBrowserWindows: matchBrowserWindows,
   expandBrowserTabs: expandBrowserTabs,
   tabActivateCommand: tabActivateCommand,
+  tabThumbPath: tabThumbPath,
+  isHiddenTab: isHiddenTab,
   rowKey: rowKey
 }

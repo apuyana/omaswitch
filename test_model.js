@@ -443,8 +443,11 @@ console.log("Model checks passed")
   assert.deepEqual(Model.tabActivateCommand(rows[2], runtime),
     ["timeout", "1", "sh", "-c", "printf '%s\\n' \"$1\" > \"$2\"", "sh", "11", runtime + "/omaswitch-tabs/edge-42.cmd"])
   assert.equal(Model.tabActivateCommand(rows[1], runtime), null, "active tab only needs window focus")
+  assert.equal(Model.tabThumbPath(rows[2], runtime), runtime + "/omaswitch-tabs/edge-42-11.jpg")
+  assert.equal(Model.tabThumbPath(rows[1], runtime), "", "visible tab uses the live window preview")
   const evil = Object.assign({}, rows[2], { tab: Object.assign({}, rows[2].tab, { cmd: "/etc/passwd" }) })
   assert.equal(Model.tabActivateCommand(evil, runtime), null)
+  assert.equal(Model.tabThumbPath(evil, runtime), "")
   assert.notEqual(Model.rowKey(rows[1]), Model.rowKey(rows[2]))
 
   // Quota is per browser across profiles: two Edge windows (two profiles)

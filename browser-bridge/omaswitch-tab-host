@@ -5,12 +5,18 @@ Browser -> host: tab snapshots, written atomically to
   $XDG_RUNTIME_DIR/omaswitch-tabs/<browser>-<pid>.json
 then the `stamp` file in that directory is rewritten so the switcher reloads.
 
+Browser -> host: {"thumb": {"tabId", "data": base64 JPEG}} screenshots of a
+tab taken while it was visible, kept as <browser>-<pid>-<tabId>.jpg for the
+switcher's preview of background tabs; {"forget": tabId} drops one.
+
 Switcher -> host: a tab id written as one line to the FIFO named in the
 snapshot (`<browser>-<pid>.cmd`); it is forwarded as {"activate": id}.
 
 One host process runs per browser profile; its files are removed on exit.
 """
 
+import base64
+import glob
 import json
 import os
 import re
@@ -21,7 +27,7 @@ import threading
 RUNTIME = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
 DIR = os.path.join(RUNTIME, "omaswitch-tabs")
 STAMP = os.path.join(DIR, "stamp")
-MAX_MESSAGE = 4 * 1024 * 1024
+MAX_MESSAGE = 16 * 1024 * 1024
 
 out_lock = threading.Lock()
 
@@ -63,6 +69,29 @@ def serve_commands(fifo):
                 send({"activate": int(line)})
 
 
+def save_thumb(base, thumb):
+    if not isinstance(thumb, dict) or not isinstance(thumb.get("tabId"), int):
+        return
+    try:
+        data = base64.b64decode(thumb.get("data") or "", validate=True)
+    except ValueError:
+        return
+    if not data.startswith(b"\xff\xd8"):
+        return
+    path = f"{base}-{thumb['tabId']}.jpg"
+    with open(path + ".tmp", "wb") as f:
+        f.write(data)
+    os.replace(path + ".tmp", path)
+
+
+def drop_thumb(base, tab_id):
+    if isinstance(tab_id, int):
+        try:
+            os.unlink(f"{base}-{tab_id}.jpg")
+        except FileNotFoundError:
+            pass
+
+
 def main():
     os.makedirs(DIR, mode=0o700, exist_ok=True)
     pid = os.getpid()
@@ -82,6 +111,12 @@ def main():
                     os.unlink(fifo)
                 os.mkfifo(fifo, 0o600)
                 threading.Thread(target=serve_commands, args=(fifo,), daemon=True).start()
+            if "thumb" in message:
+                save_thumb(base, message.get("thumb"))
+                continue
+            if "forget" in message:
+                drop_thumb(base, message.get("forget"))
+                continue
             message["cmd"] = base + ".cmd"
             tmp = f"{base}.json.tmp"
             with open(tmp, "w") as f:
@@ -90,9 +125,9 @@ def main():
             touch_stamp()
     finally:
         if base:
-            for suffix in (".json", ".cmd", ".json.tmp"):
+            for path in [base + s for s in (".json", ".cmd", ".json.tmp")] + glob.glob(base + "-*.jpg*"):
                 try:
-                    os.unlink(base + suffix)
+                    os.unlink(path)
                 except FileNotFoundError:
                     pass
             touch_stamp()

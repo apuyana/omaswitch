@@ -73,6 +73,13 @@ Item {
   property bool cyclePickPending: false
   property int cyclePickDirection: 1
   readonly property string tabsDir: Quickshell.env("XDG_RUNTIME_DIR") + "/omaswitch-tabs"
+  readonly property bool selectedHiddenTab: root.opened && selectedIndex >= 0 && selectedIndex < rows.length
+    && Model.isHiddenTab(rows[selectedIndex])
+  readonly property string selectedTabThumb: {
+    if (!root.selectedHiddenTab) return ""
+    var path = Model.tabThumbPath(rows[selectedIndex], Quickshell.env("XDG_RUNTIME_DIR"))
+    return path ? "file://" + path : ""
+  }
   property var rows: []
 
   readonly property int headerHeight: Math.max(Style.space(34), Style.font.title + Style.spacing.controlPaddingY * 2)
@@ -1029,6 +1036,42 @@ Item {
                 Math.min(root.previewConstraintWidth, parent.width),
                 Math.min(root.previewConstraintHeight, parent.height))
               onHasContentChanged: if (hasContent) root.previewReady(1)
+            }
+
+            // A background browser tab is not what the window shows, so the
+            // live capture would be the wrong page: cover it with the
+            // screenshot the extension took while that tab was visible.
+            Rectangle {
+              id: tabPreview
+              anchors.fill: parent
+              z: 3
+              visible: root.selectedHiddenTab
+              color: root.background
+
+              Image {
+                id: tabThumb
+                anchors.fill: parent
+                anchors.margins: Style.space(4)
+                fillMode: Image.PreserveAspectFit
+                asynchronous: true
+                cache: false
+                source: root.selectedTabThumb
+                sourceSize.width: Math.max(1, width * Screen.devicePixelRatio)
+              }
+
+              Text {
+                anchors.centerIn: parent
+                width: parent.width - Style.space(32)
+                visible: tabThumb.status !== Image.Ready
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.Wrap
+                textFormat: Text.PlainText
+                text: tabThumb.status === Image.Loading ? "" : "No preview yet for this tab.\nOpen it once and it will have one."
+                color: root.foreground
+                opacity: 0.6
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+              }
             }
 
             // Where an OCR-only match was found, from Tesseract's layout boxes.
