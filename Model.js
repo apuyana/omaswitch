@@ -180,7 +180,10 @@ function sortedWindows(values, rankFn) {
 // tab, and every row is ordered by when it was last in use, so tabs and other
 // windows interleave the way Edge's Alt+Tab does on Windows.
 
-var tabsPerWindow = 5
+// Entries per browser (Edge, Chrome, ...), summed over all its windows and
+// profiles: every window still shows once (its visible tab), and the most
+// recent background tabs fill the rest of the quota.
+var tabsPerBrowser = 5
 
 // Hyprland class -> `browser` value the extension reports. PWAs use other
 // classes (msedge-*, chrome-*) and stay plain windows.
@@ -251,11 +254,14 @@ function matchBrowserWindows(rows, snapshots) {
 
 // rows: window snapshots in MRU order (rows[0] focused).
 // windowUsedAt: addressKey -> ms when that window last lost focus.
+// limit: entries per browser (see tabsPerBrowser).
 // Returns rows ordered by last use, browser windows expanded into tab rows.
 function expandBrowserTabs(rows, snapshots, windowUsedAt, limit) {
   var source = rows && typeof rows.slice === "function" ? rows : []
   var usedAt = windowUsedAt || {}
-  var perWindow = limit > 0 ? limit : tabsPerWindow
+  var perBrowser = limit > 0 ? limit : tabsPerBrowser
+  var hidden = {}
+  var windowsByBrowser = {}
   var matches = matchBrowserWindows(source, snapshots)
   var unknownBase = 8e15
   var items = []
@@ -276,20 +282,27 @@ function expandBrowserTabs(rows, snapshots, windowUsedAt, limit) {
       items.push({ row: row, time: time, order: items.length })
       continue
     }
-    var tabs = match.tabs.slice(0, perWindow)
-    for (var t = 0; t < tabs.length; t++) {
-      var tab = tabs[t]
+    windowsByBrowser[match.browser] = (windowsByBrowser[match.browser] || 0) + 1
+    if (!hidden[match.browser]) hidden[match.browser] = []
+    for (var t = 0; t < match.tabs.length; t++) {
+      var tab = match.tabs[t]
       if (!tab || typeof tab.id !== "number") continue
-      var tabTime = tab.active ? time : Math.min(Number(tab.usedAt) || 0, time - 1)
-      items.push({
+      var item = {
         row: Object.assign({}, row, {
           title: String(tab.title || ""),
           tab: { id: tab.id, active: !!tab.active, url: String(tab.url || ""), cmd: match.cmd, browser: match.browser }
         }),
-        time: tabTime,
-        order: items.length
-      })
+        time: tab.active ? time : Math.min(Number(tab.usedAt) || 0, time - 0.5),
+        order: items.length + hidden[match.browser].length / 1000
+      }
+      if (tab.active) items.push(item)
+      else hidden[match.browser].push(item)
     }
+  }
+  for (var browser in hidden) {
+    var room = Math.max(0, perBrowser - windowsByBrowser[browser])
+    hidden[browser].sort(function(left, right) { return right.time - left.time })
+    items = items.concat(hidden[browser].slice(0, room))
   }
   items.sort(function(left, right) {
     if (left.time !== right.time) return left.time > right.time ? -1 : 1

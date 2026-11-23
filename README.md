@@ -15,7 +15,7 @@ OmaSwitch is a keyboard-first window switcher overlay for [Omarchy](https://omar
 
 > **Fork note (apuyana/omaswitch).** This fork installs as `apuyana.omaswitch` and adds:
 > - Confirming the selection when **Ctrl** is released too (Alt release is often swallowed on Wayland).
-> - **Recent browser tabs in Alt+Tab** for Microsoft Edge and Google Chrome (also Chromium/Brave), like Edge on Windows: the 5 most recently used tabs of each browser window show up as their own entries, interleaved by time with your other windows. Picking one focuses that window and switches to that tab.
+> - **Recent browser tabs in Alt+Tab** for Microsoft Edge and Google Chrome (also Chromium/Brave), like Edge on Windows: each browser gets 5 entries in total across all its windows and profiles (every window shows once with its visible tab; the most recent background tabs fill the rest), interleaved by time with your other windows. Picking one focuses that window and switches to that tab.
 >
 > ### Install this fork on a new machine
 > ```bash

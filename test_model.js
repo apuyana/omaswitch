@@ -446,6 +446,21 @@ console.log("Model checks passed")
   const evil = Object.assign({}, rows[2], { tab: Object.assign({}, rows[2].tab, { cmd: "/etc/passwd" }) })
   assert.equal(Model.tabActivateCommand(evil, runtime), null)
   assert.notEqual(Model.rowKey(rows[1]), Model.rowKey(rows[2]))
+
+  // Quota is per browser across profiles: two Edge windows (two profiles)
+  // share 5 entries -> both windows + the 3 most recent background tabs.
+  const work = { address: "0xe2", title: "Board", activated: false, workspace: { id: 6 }, lastIpcObject: { class: "microsoft-edge", focusHistoryID: 2 } }
+  const workSnap = { browser: "edge", cmd: runtime + "/omaswitch-tabs/edge-43.cmd", windows: [{ id: 9, tabs: [
+    { id: 30, active: true, title: "Board", url: "https://board.example.com/" },
+    { id: 31, active: false, title: "PR", url: "https://git.example.com/pr", usedAt: 700 },
+    { id: 32, active: false, title: "CI", url: "https://ci.example.com/", usedAt: 60 }
+  ] }] }
+  const multi = Model.expandBrowserTabs([term, edge, work], [snapshots[0], workSnap], { e1: 1000, e2: 800 }, 5)
+  assert.deepEqual(multi.map((r) => r.title), ["Terminal", "Inbox", "Wiki", "Board", "PR", "Old"])
+  assert.equal(multi.filter((r) => r.tab).length, 5)
+  // More windows than the quota: every window still shows, no background tabs.
+  assert.deepEqual(Model.expandBrowserTabs([term, edge, work], [snapshots[0], workSnap], { e1: 1000, e2: 800 }, 2).map((r) => r.title),
+    ["Terminal", "Inbox", "Board"])
   // No snapshot: rows unchanged, MRU order kept.
   assert.deepEqual(Model.expandBrowserTabs([term, edge, notes], [], {}).map((r) => r.title), ["Terminal", "Inbox", "Notes"])
   // Unmatched title (stale snapshot) leaves the window alone.
