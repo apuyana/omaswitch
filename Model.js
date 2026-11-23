@@ -308,7 +308,17 @@ function expandBrowserTabs(rows, snapshots, windowUsedAt, limit, windowFocusedAt
   var hidden = {}
   var windowsByBrowser = {}
   var matches = matchBrowserWindows(source, snapshots, windowFocusedAt)
-  var unknownBase = 8e15
+  // Windows with no recorded focus time (focused before the shell started)
+  // are older than anything recorded; their background tabs then stay
+  // grouped right below them instead of sinking to the end of the list.
+  var oldest = Infinity
+  for (var uk in usedAt) if (typeof usedAt[uk] === "number") oldest = Math.min(oldest, usedAt[uk])
+  for (var mk in matches)
+    for (var mt = 0; mt < matches[mk].tabs.length; mt++) {
+      var seen = Number(matches[mk].tabs[mt] && matches[mk].tabs[mt].usedAt)
+      if (seen > 0) oldest = Math.min(oldest, seen)
+    }
+  if (!isFinite(oldest)) oldest = 1e15
   var items = []
   var previous = Infinity
   for (var i = 0; i < source.length; i++) {
@@ -317,9 +327,9 @@ function expandBrowserTabs(rows, snapshots, windowUsedAt, limit, windowFocusedAt
     var time
     if (i === 0 && isCurrent(row)) time = Infinity
     else if (key && typeof usedAt[key] === "number") time = usedAt[key]
-    else time = isFinite(previous) ? previous - 1 : unknownBase - i
+    else time = Math.min(previous, oldest) - 1
     // Keep the compositor's MRU order authoritative between windows.
-    if (time >= previous) time = isFinite(previous) ? previous - 1 : unknownBase - i
+    if (time >= previous) time = previous - 1
     previous = time
 
     var match = key ? matches[key] : null

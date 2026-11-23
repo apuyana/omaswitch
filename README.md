@@ -24,7 +24,7 @@ OmaSwitch is a keyboard-first window switcher overlay for [Omarchy](https://omar
 > ```
 > Then, once in each browser: open `edge://extensions` / `chrome://extensions`, turn on **Developer mode**, **Load unpacked**, and pick `~/Extensions/omaswitch-tabs` (a link `install.sh` creates to `browser-bridge/extension`, since file pickers hide `~/.config`) (id `mphgidpkjniiknflkklakckkdbfnihag`). Bind Alt+Tab as below, using `apuyana.omaswitch` instead of `piyush.omaswitch`.
 >
-> How tabs get here: the extension tracks when each tab stopped being the active one and sends the top tabs per window to `browser-bridge/omaswitch-tab-host` (native messaging), which writes `$XDG_RUNTIME_DIR/omaswitch-tabs/<browser>-<pid>.json`. The switcher pairs each browser window with its extension window by the active tab title, and activates a tab by writing its id to the host FIFO. Incognito windows are never reported. Without the extension, the switcher behaves exactly as upstream.
+> How tabs get here: the extension tracks when each tab stopped being the active one and sends the top tabs per window to `browser-bridge/omaswitch-tab-host` (native messaging), which writes `$XDG_RUNTIME_DIR/omaswitch-tabs/<browser>-<pid>.json`. The switcher pairs each browser window with its extension window by the active tab title, and activates a tab by writing its id to the host FIFO. After changing the plugin code run `omarchy restart shell`: the shell does not hot-reload this keepLoaded overlay. `omarchy-shell shell call apuyana.omaswitch debugState ""` prints the computed rows. Incognito windows are never reported. Without the extension, the switcher behaves exactly as upstream.
 
 ## Features
 

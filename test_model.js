@@ -429,13 +429,13 @@ console.log("Model checks passed")
   const names = rows.map((r) => r.title)
   // Terminal (focused), Edge's visible tab, Edge tab Wiki (950), Notes (500),
   // Chrome (300) and its hidden tab Search (400, capped below its own window),
-  // WhatsApp (no focus time: placed right after its MRU neighbour), then the
-  // older Edge tabs. Only 5 tabs per window: T6 is dropped.
-  assert.deepEqual(names, ["Terminal", "Inbox", "Wiki", "Notes", "Docs", "Search", "WhatsApp", "Old", "T4", "T5"])
+  // the older Edge tabs, then WhatsApp (no focus time: older than anything
+  // recorded). Only 5 entries for Edge: T6 is dropped.
+  assert.deepEqual(names, ["Terminal", "Inbox", "Wiki", "Notes", "Docs", "Search", "Old", "T4", "T5", "WhatsApp"])
   assert.equal(rows.filter((r) => r.tab && r.tab.browser === "edge").length, 5)
   assert.equal(rows[1].tab.active, true)
   assert.equal(rows[2].tab.active, false)
-  assert.equal(rows[6].tab, undefined, "PWA stays a plain window")
+  assert.equal(rows[9].tab, undefined, "PWA stays a plain window")
   assert.equal(Model.detail(rows[2]), "wiki.example.org · tab · ws 1")
   assert.deepEqual(Model.filteredWindows(rows, "wiki").map((r) => r.title), ["Wiki"])
   // Hidden tabs never match on OCR text captured from the visible tab.
@@ -461,6 +461,10 @@ console.log("Model checks passed")
   // More windows than the quota: every window still shows, no background tabs.
   assert.deepEqual(Model.expandBrowserTabs([term, edge, work], [snapshots[0], workSnap], { e1: 1000, e2: 800 }, 2).map((r) => r.title),
     ["Terminal", "Inbox", "Board"])
+  // Right after a shell restart no window has a focus time: background tabs
+  // stay grouped under their window instead of sinking below every window.
+  assert.deepEqual(Model.expandBrowserTabs([term, edge, notes], [snapshots[0]], {}).map((r) => r.title),
+    ["Terminal", "Inbox", "Wiki", "Old", "T4", "T5", "Notes"])
   // No snapshot: rows unchanged, MRU order kept.
   assert.deepEqual(Model.expandBrowserTabs([term, edge, notes], [], {}).map((r) => r.title), ["Terminal", "Inbox", "Notes"])
   // A window the user named ("Something else") is the only Edge window left

@@ -436,6 +436,14 @@ Item {
     rebuildRows()
   }
 
+  function debugState() {
+    var windows = Model.sortedWindows(Model.managedWindows(Hyprland.toplevels.values), root.mruAddresses).map(Model.windowSnapshot)
+    var rows = Model.expandBrowserTabs(windows, root.tabSnapshots, root.windowUsedAt, 0, root.windowFocusedAt)
+    return JSON.stringify({ snapshots: root.tabSnapshots.length, focusStoreLoaded: root.focusStoreLoaded,
+      usedAt: root.windowUsedAt, lastActive: root.lastActiveKey,
+      rows: rows.map(function(r) { return r.title.slice(0, 30) + (r.tab ? (r.tab.active ? " [tab*]" : " [tab]") : "") }) })
+  }
+
   function noteActiveWindow(address) {
     var key = Model.addressKey(address)
     if (!key || key === root.lastActiveKey) return
