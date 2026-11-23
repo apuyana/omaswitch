@@ -66,6 +66,7 @@ Item {
   // when each window last lost focus, so tabs interleave with windows by time.
   property var tabSnapshots: []
   property var windowUsedAt: ({})
+  property var windowFocusedAt: ({})
   property string lastActiveKey: ""
   // True until the user moves the selection after an Alt+Tab open; a late tab
   // snapshot then re-picks the "previous" row instead of keeping a stale one.
@@ -431,14 +432,16 @@ Item {
 
   function refresh() {
     var windows = Model.sortedWindows(Model.managedWindows(Hyprland.toplevels.values), root.mruAddresses).map(Model.windowSnapshot)
-    allWindows = Model.expandBrowserTabs(windows, root.tabSnapshots, root.windowUsedAt)
+    allWindows = Model.expandBrowserTabs(windows, root.tabSnapshots, root.windowUsedAt, 0, root.windowFocusedAt)
     rebuildRows()
   }
 
   function noteActiveWindow(address) {
     var key = Model.addressKey(address)
     if (!key || key === root.lastActiveKey) return
-    if (root.lastActiveKey) root.windowUsedAt[root.lastActiveKey] = Date.now()
+    var now = Date.now()
+    if (root.lastActiveKey) root.windowUsedAt[root.lastActiveKey] = now
+    root.windowFocusedAt[key] = now
     root.lastActiveKey = key
   }
 

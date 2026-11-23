@@ -11,6 +11,10 @@ const MAX_TITLE = 300
 // The active tab of each window is "in use" and carries no time here.
 let usedAt = {}
 let activeByWindow = {}
+// windowId -> ms when the window last gained focus. The switcher pairs it with
+// Hyprland's focus events for windows whose title is not the tab title
+// (windows given a custom name in the browser).
+let focusedAt = {}
 let port = null
 let sendTimer = null
 let reconnectDelay = 1000
@@ -25,14 +29,15 @@ const brand = (() => {
 
 async function restore() {
   try {
-    const saved = await chrome.storage.session.get(["usedAt", "activeByWindow"])
+    const saved = await chrome.storage.session.get(["usedAt", "activeByWindow", "focusedAt"])
     usedAt = saved.usedAt || {}
     activeByWindow = saved.activeByWindow || {}
+    focusedAt = saved.focusedAt || {}
   } catch (e) {}
 }
 
 function persist() {
-  chrome.storage.session.set({ usedAt, activeByWindow }).catch(() => {})
+  chrome.storage.session.set({ usedAt, activeByWindow, focusedAt }).catch(() => {})
 }
 
 function markActive(windowId, tabId) {
@@ -58,7 +63,7 @@ async function snapshot() {
         usedAt: t.active ? null : (usedAt[t.id] || t.lastAccessed || 0)
       }))
       tabs.sort((a, b) => (b.active - a.active) || (b.usedAt - a.usedAt))
-      return { id: w.id, focused: !!w.focused, incognito: !!w.incognito, tabs: tabs.slice(0, TABS_PER_WINDOW) }
+      return { id: w.id, focused: !!w.focused, focusedAt: focusedAt[w.id] || 0, incognito: !!w.incognito, tabs: tabs.slice(0, TABS_PER_WINDOW) }
     }).filter((w) => !w.incognito)
   }
 }
@@ -111,9 +116,20 @@ chrome.tabs.onUpdated.addListener((tabId, change) => { if (change.title || chang
 chrome.tabs.onCreated.addListener(scheduleSend)
 chrome.tabs.onAttached.addListener(scheduleSend)
 chrome.tabs.onDetached.addListener(scheduleSend)
-chrome.windows.onRemoved.addListener((windowId) => { delete activeByWindow[windowId]; persist(); scheduleSend() })
+chrome.windows.onRemoved.addListener((windowId) => {
+  delete activeByWindow[windowId]
+  delete focusedAt[windowId]
+  persist()
+  scheduleSend()
+})
 chrome.windows.onCreated.addListener(scheduleSend)
-chrome.windows.onFocusChanged.addListener(scheduleSend)
+chrome.windows.onFocusChanged.addListener((windowId) => {
+  if (windowId !== chrome.windows.WINDOW_ID_NONE) {
+    focusedAt[windowId] = Date.now()
+    persist()
+  }
+  scheduleSend()
+})
 
 restore().then(async () => {
   const active = await chrome.tabs.query({ active: true })

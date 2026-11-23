@@ -217,10 +217,18 @@ function titleMatches(windowTitle, tabTitle) {
   return w.indexOf(t + " - ") === 0 ? 1 : 0
 }
 
-// Pair each Hyprland browser window with the extension's window whose active
-// tab title matches the toplevel title (Edge: "<tab>", Chrome: "<tab> - Google
-// Chrome"). Exact matches win; each extension window is used once.
-function matchBrowserWindows(rows, snapshots) {
+// Focus events of the same window seen by Hyprland and by the extension land
+// within this many ms of each other.
+var focusMatchWindow = 3000
+
+// Pair each Hyprland browser window with one of the extension's windows:
+// 1. active tab title == toplevel title (Edge) or a prefix of it followed by
+//    " - " (Chrome, Edge profiles: "<tab> - Personal - Microsoft Edge");
+// 2. windows the user named (title is the name, not the tab) by matching the
+//    time each one last gained focus in Hyprland and in the browser;
+// 3. if one window and one candidate of a browser remain, they belong together.
+// Each extension window is used once.
+function matchBrowserWindows(rows, snapshots, windowFocusedAt) {
   var candidates = []
   var source = snapshots && typeof snapshots.slice === "function" ? snapshots : []
   for (var s = 0; s < source.length; s++) {
@@ -230,7 +238,8 @@ function matchBrowserWindows(rows, snapshots) {
       var tabs = windows[w] && windows[w].tabs && typeof windows[w].tabs.slice === "function" ? windows[w].tabs : []
       var active = null
       for (var t = 0; t < tabs.length; t++) if (tabs[t] && tabs[t].active) active = tabs[t]
-      if (active) candidates.push({ browser: String(snap.browser || ""), cmd: String(snap.cmd || ""), tabs: tabs, active: active, used: false })
+      if (active) candidates.push({ browser: String(snap.browser || ""), cmd: String(snap.cmd || ""), tabs: tabs, active: active,
+        focusedAt: Number(windows[w].focusedAt) || 0, used: false })
     }
   }
   var result = {}
@@ -249,20 +258,56 @@ function matchBrowserWindows(rows, snapshots) {
       }
     }
   }
+
+  var focusedAt = windowFocusedAt || {}
+  var pairs = []
+  for (var r = 0; r < rows.length; r++) {
+    var rowKey = addressKey(rows[r])
+    var rowKind = browserKind(rows[r])
+    var seen = rowKey ? Number(focusedAt[rowKey]) || 0 : 0
+    if (!rowKind || !rowKey || result[rowKey] || !seen) continue
+    for (var k = 0; k < candidates.length; k++) {
+      var other = candidates[k]
+      if (other.used || other.browser !== rowKind || !other.focusedAt) continue
+      var gap = Math.abs(other.focusedAt - seen)
+      if (gap <= focusMatchWindow) pairs.push({ key: rowKey, cand: other, gap: gap })
+    }
+  }
+  pairs.sort(function(left, right) { return left.gap - right.gap })
+  for (var p = 0; p < pairs.length; p++) {
+    if (result[pairs[p].key] || pairs[p].cand.used) continue
+    pairs[p].cand.used = true
+    result[pairs[p].key] = pairs[p].cand
+  }
+
+  var leftRows = {}, leftCands = {}
+  for (var lr = 0; lr < rows.length; lr++) {
+    var lk = addressKey(rows[lr]), lb = browserKind(rows[lr])
+    if (lb && lk && !result[lk]) (leftRows[lb] = leftRows[lb] || []).push(lk)
+  }
+  for (var lc = 0; lc < candidates.length; lc++)
+    if (!candidates[lc].used) (leftCands[candidates[lc].browser] = leftCands[candidates[lc].browser] || []).push(candidates[lc])
+  for (var b in leftRows) {
+    if (leftRows[b].length === 1 && leftCands[b] && leftCands[b].length === 1) {
+      leftCands[b][0].used = true
+      result[leftRows[b][0]] = leftCands[b][0]
+    }
+  }
   return result
 }
 
 // rows: window snapshots in MRU order (rows[0] focused).
 // windowUsedAt: addressKey -> ms when that window last lost focus.
 // limit: entries per browser (see tabsPerBrowser).
+// windowFocusedAt: addressKey -> ms when that window last gained focus.
 // Returns rows ordered by last use, browser windows expanded into tab rows.
-function expandBrowserTabs(rows, snapshots, windowUsedAt, limit) {
+function expandBrowserTabs(rows, snapshots, windowUsedAt, limit, windowFocusedAt) {
   var source = rows && typeof rows.slice === "function" ? rows : []
   var usedAt = windowUsedAt || {}
   var perBrowser = limit > 0 ? limit : tabsPerBrowser
   var hidden = {}
   var windowsByBrowser = {}
-  var matches = matchBrowserWindows(source, snapshots)
+  var matches = matchBrowserWindows(source, snapshots, windowFocusedAt)
   var unknownBase = 8e15
   var items = []
   var previous = Infinity

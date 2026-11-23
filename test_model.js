@@ -463,8 +463,21 @@ console.log("Model checks passed")
     ["Terminal", "Inbox", "Board"])
   // No snapshot: rows unchanged, MRU order kept.
   assert.deepEqual(Model.expandBrowserTabs([term, edge, notes], [], {}).map((r) => r.title), ["Terminal", "Inbox", "Notes"])
-  // Unmatched title (stale snapshot) leaves the window alone.
+  // A window the user named ("Something else") is the only Edge window left
+  // and the snapshot has one Edge window left: they pair.
   const renamed = Object.assign({}, edge, { title: "Something else" })
-  assert.deepEqual(Model.expandBrowserTabs([term, renamed], snapshots, usedAt).map((r) => r.title), ["Terminal", "Something else"])
+  assert.deepEqual(Model.expandBrowserTabs([term, renamed], snapshots, usedAt).map((r) => r.title), ["Terminal", "Inbox", "Wiki", "Old", "T4", "T5"])
+  // Two named windows: paired by when each gained focus (Hyprland vs browser).
+  const named1 = Object.assign({}, edge, { title: "Paperclip" })
+  const named2 = Object.assign({}, work, { title: "Think US" })
+  const snapA = { browser: "edge", cmd: runtime + "/omaswitch-tabs/edge-42.cmd", windows: [{ id: 1, focusedAt: 5000, tabs: [{ id: 10, active: true, title: "Extensions", url: "" }] }] }
+  const snapB = { browser: "edge", cmd: runtime + "/omaswitch-tabs/edge-43.cmd", windows: [{ id: 9, focusedAt: 9000, tabs: [{ id: 30, active: true, title: "Teams chat", url: "" }] }] }
+  const m = Model.matchBrowserWindows([named1, named2], [snapB, snapA], { e1: 5040, e2: 9010 })
+  assert.equal(m.e1.active.title, "Extensions")
+  assert.equal(m.e2.active.title, "Teams chat")
+  // Without focus times two named windows are ambiguous: left as plain windows.
+  assert.deepEqual(Object.keys(Model.matchBrowserWindows([named1, named2], [snapB, snapA], {})), [])
+  // Focus times too far apart do not pair.
+  assert.deepEqual(Object.keys(Model.matchBrowserWindows([named1, named2], [snapB, snapA], { e1: 50000, e2: 90000 })), [])
 })()
 console.log("Browser tab checks passed")

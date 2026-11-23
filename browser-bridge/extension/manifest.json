@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "OmaSwitch Tabs",
-  "version": "1.0",
+  "version": "1.1",
   "description": "Shares recently used tabs with the OmaSwitch Alt+Tab switcher and activates the tab you pick.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArbwFXiwXSFufVy87olpQ7g7oVq2sQfjCPASrS0dQaQuvjcizK2SfSdNk5fqufnxzI17g95V+LhV0qV1g8kVmoXcXLm/zz53gQz0cRTSVN4545OIZ32DDYBcvdy9KgddvL5CH1fhsRfuk7Joduy7gXfmTbXi0dK9cErVvteNorEEqIgDZHKUeggAV/GsHF8zBuzO3V68mJVvEuYuSwWm5/wbYADS1jXSM3PUaDfd5RViOLtXLbdq93f2clOUmVaCz4QuGI5Ma+nc1TErtNJEremF5r2b69A7yfAneJ+TF0xYgDKD7J9sqLDOCvD76uwrTil4BT2/oNBa+TP1YFTMr5wIDAQAB",
   "permissions": [
